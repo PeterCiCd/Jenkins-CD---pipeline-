@@ -1,0 +1,130 @@
+Script
+
+def git_url = ''
+def git_repo_branch = ''
+
+def registry_creds = ''
+def registry_url = ''
+
+def ssh_stand_creds = ''
+def stand = [:]
+
+pipeline {
+    agent {
+        label 'mvn_agent'
+    }
+
+    parameters {
+        string(name: 'GIT_BRANCH', defaultValue: 'master', description: 'Ветка с docker-compose')
+
+        booleanParam(name: 'docker_compose', defaultValue: false, description: 'Достака docker-compose.yml')
+
+        booleanParam(name: 'serviceA', defaultValue: false, description: 'Достака сервиса service A')
+        booleanParam(name: 'serviceB', defaultValue: false, description: 'Достака сервиса service B')
+
+        }
+    stages {
+        stage("Настройки pipeline") {
+            steps {
+                script {
+                    git_url = 'https://github.com/PeterCiCd/contour-dev.git'
+                    git_repo_branch = "${params.GIT_BRANCH}"
+
+                    // Настройки для docker login на стенде, указать свои
+                    //Логин и пароль для  registry сохраняем в jenkins Credentials
+                    registry_creds = 'NEXUS_USER'
+                    // URL к registry с доступом из стенда например http://192.168.0.1:5000
+                    registry_url = ''
+
+                    // Настройки подключения к стенду по ssh
+                    //Логин и пароль для стенда сохраняем в jenkins Credentials, с названием например userCD
+                    ssh_stand_creds = 'userCD'
+                    stand.name = 'contour-dev'
+                    // Указываем IP адрес стенда
+                    stand.host = ''
+                    stand.allowAnyHosts = true
+                    //Логин и пароль для стенда сохраняем в jenkins Credentials, с названием например userCD, 
+                    // и по правильному запослняем на этапе withCredentials полученными данными из jenkins
+                    stand.user = 'contour'
+                    // указываем свой порт, на котором настроен ssh
+                    stand.port = 22
+
+                    git branch: "${git_repo_branch}",
+                            url: "${git_url}"
+
+                }
+            }
+        }
+
+        stage("Доставка docker-compose.yml") {
+            when {
+                expression { params.docker_compose == true }
+            }
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'userCD', passwordVariable: 'sshPass', usernameVariable: 'sshUser')]) {
+                        stand.password = sshPass
+                        sshPut remote: stand, from: "docker-compose.yml", into: "/opt/contour-dev"
+                        // Запуск выполняеи в рамках учебного проекта, правильнее просто положить\обновить
+                        // docker-compose.yml, а запуск выполнить следующими шагами,
+                        // т.к. при измении docker-compose.yml его сервисы еще могут быть не собраны в репозитории
+                        sshCommand remote: stand, command: "cd /opt/contour-dev/ \
+                                  && docker-compose up -d"
+                    }
+                }
+            }
+        }
+
+        stage("Service A") {
+            when {
+                expression { params.serviceA == true }
+            }
+            steps {
+                script {
+                    def service_name = 'service-a'
+                    echo "Доставка ${service_name}..."
+                        withCredentials([usernamePassword(credentialsId: 'userCD', passwordVariable: 'sshPass', usernameVariable: 'sshUser')]) {
+                            stand.password = sshPass
+                            yaml = "/opt/contour-dev/docker-compose.yml"
+
+                            // TODO: добавить используя withCredentials и sshCommand для docker login $registry_url
+                            sshCommand remote: stand, command: "docker-compose -f ${yaml} pull ${service_name}"
+                            echo "pull ${service_name}"
+                            sshCommand remote: stand, command: "docker-compose -f ${yaml} up -d --force-recreate --no-deps ${service_name}"
+                            // TODO: добавить используя withCredentials и sshCommand для docker logout $registry_url
+                            // docker не безопасно хранит пароли
+                        }
+                }
+            }
+        }
+
+        stage("Service B") {
+            when {
+                expression { params.serviceB == true }
+            }
+            steps {
+                script {
+                    def service_name = 'service-b'
+                    echo "Доставка ${service_name}..."
+                        withCredentials([usernamePassword(credentialsId: 'userCD', passwordVariable: 'sshPass', usernameVariable: 'sshUser')]) {
+                            stand.password = sshPass
+                            yaml = "/opt/contour-dev/docker-compose.yml"
+
+                            // TODO: добавить используя withCredentials и sshCommand для docker login $registry_url
+                            sshCommand remote: stand, command: "docker-compose -f ${yaml} pull ${service_name}"
+                            echo "pull ${service_name}"
+                            sshCommand remote: stand, command: "docker-compose -f ${yaml} up -d --force-recreate --no-deps ${service_name}"
+                            // TODO: добавить используя withCredentials и sshCommand для docker logout $registry_url
+                            // docker не безопасно хранит пароли
+                        }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
